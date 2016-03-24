@@ -6,7 +6,10 @@
 
 using namespace std;
 
+#define MAX_CYCLE   500000
+
 #define WORD        4
+#define BYTE        8
 #define SIGN_BIT    0x80000000
 #define IndexToAddr(x) ((x) << 2)
 
@@ -15,7 +18,7 @@ using namespace std;
 #define PCReg           33
 #define NextPCReg       34
 #define PrevPCReg       35
-#define RegNum          35
+#define RegNum          36
 
 int *raw_instr;
 int PC_init;
@@ -37,18 +40,16 @@ int main() {
     Instruction instr(raw_instr[0]);
     snapshot.open("snapshot.rpt", ios::out);
     int cycle = 0;
-    snapshot << "cycle " << cycle << endl;
-    writeState(&snapshot);
-    cycle++;
 
-    while(instr.operation != OP_HALT){
+    while(instr.operation != OP_HALT && cycle <= MAX_CYCLE){
 
-
-        int nextLoadReg = 0;
-        int nextLoadValue = 0;
+        snapshot << "cycle " << dec << cycle << endl;
+        writeState(&snapshot);
+        cycle++;
 
         int nowPC = registers[NextPCReg];
-        int sum, tmp, value;
+        int sum, tmp, value, target;
+        unsigned int uint;
 
         switch(instr.operation) {
             case R_FORMAT:
@@ -57,8 +58,8 @@ int main() {
                     case FUNC_ADD:
                         sum = registers[instr.rs] + registers[instr.rt];
                         //if (!((registers[instr.rs] ^ registers[instr.rt]) & SIGN_BIT) && ((registers[instr.rs] ^ sum) & SIGN_BIT)) {
-                            //RaiseException(OverflowException, 0);
-                            //continue;
+                        //RaiseException(OverflowException, 0);
+                        //continue;
                         //}
                         registers[instr.rd] = sum;
                         break;
@@ -67,7 +68,8 @@ int main() {
                         break;
                     case FUNC_SUB:
                         sum = registers[instr.rs] - registers[instr.rt];
-                        if (!((registers[instr.rs] ^ registers[instr.rt]) & SIGN_BIT) && ((registers[instr.rs] ^ sum) & SIGN_BIT)) {
+                        if (!((registers[instr.rs] ^ registers[instr.rt]) & SIGN_BIT) &&
+                            ((registers[instr.rs] ^ sum) & SIGN_BIT)) {
                             //RaiseException(OverflowException, 0);
                             continue;
                         }
@@ -83,10 +85,10 @@ int main() {
                         registers[instr.rd] = registers[instr.rs] ^ registers[instr.rt];
                         break;
                     case FUNC_NOR:
-                        registers[instr.rd] = ~registers[instr.rs] | registers[instr.rt];
+                        registers[instr.rd] = ~(registers[instr.rs] | registers[instr.rt]);
                         break;
                     case FUNC_NAND:
-                        registers[instr.rd] = ~registers[instr.rs] & registers[instr.rt];
+                        registers[instr.rd] = ~(registers[instr.rs] & registers[instr.rt]);
                         break;
                     case FUNC_SLT:
                         if (registers[instr.rs] < registers[instr.rt])
@@ -98,9 +100,9 @@ int main() {
                         registers[instr.rd] = registers[instr.rt] << instr.other;
                         break;
                     case FUNC_SRL:
-                        tmp = registers[instr.rt];
-                        tmp >>= instr.other;
-                        registers[instr.rd] = tmp;
+                        uint = (unsigned int)registers[instr.rt];
+                        uint >>= instr.other;
+                        registers[instr.rd] = uint;
                         break;
                     case FUNC_SRA:
                         registers[instr.rd] = registers[instr.rt] >> instr.other;
@@ -115,8 +117,8 @@ int main() {
             case OP_ADDI:
                 sum = registers[instr.rs] + instr.other;
                 //if (!((registers[instr.rs] ^ instr.other) & SIGN_BIT) && ((instr.other ^ sum) & SIGN_BIT)) {
-                    //RaiseException(OverflowException, 0);
-                    //continue;
+                //RaiseException(OverflowException, 0);
+                //continue;
                 //}
                 registers[instr.rt] = sum;
                 break;
@@ -129,7 +131,7 @@ int main() {
                     //RaiseException(AddressErrorException, tmp);
                     continue;
                 }
-                value = raw_data[tmp/WORD];
+                value = raw_data[tmp / WORD];
                 registers[instr.rt] = value;
                 break;
             case OP_LH:
@@ -139,36 +141,51 @@ int main() {
                     //RaiseException(AddressErrorException, tmp);
                     continue;
                 }
-                //if (!ReadMem(tmp, 2, &value))
-                //    continue;
-                if ((value & 0x8000) && (instr.operation == OP_LH))
-                    value |= 0xffff0000;
-                else
-                    value &= 0xffff;
+                value = raw_data[tmp / WORD] << BYTE*(tmp%WORD);
+                if ((value & SIGN_BIT) && (instr.operation == OP_LH))
+                    registers[instr.rt] = value >> 2*BYTE;
+                else {
+                    uint = (unsigned int)value;
+                    registers[instr.rt] = uint >> 2*BYTE;
+                }
                 break;
             case OP_LB:
             case OP_LBU:
                 tmp = registers[instr.rs] + instr.other;
-                //if (!ReadMem(tmp, 1, &value))
-                //    continue;
-                if ((value & 0x80) && (instr.operation == OP_LB))
-                    value |= 0xffffff00;
-                else
-                    value &= 0xff;
+                value = raw_data[tmp/WORD] << BYTE*(tmp%WORD);
+                if ((value & SIGN_BIT) && (instr.operation == OP_LB))
+                    registers[instr.rt] = value >> 3*BYTE;
+                else {
+                    uint = (unsigned int)value;
+                    registers[instr.rt] = uint >> 3*BYTE;
+                }
                 break;
             case OP_SW:
                 tmp = registers[instr.rs] + instr.other;
-
                 value = registers[instr.rt];
                 raw_data[tmp/WORD] = value;
                 break;
             case OP_SH:
-                //if (!WriteMem((unsigned)(registers[instr.rs] + instr.other), 2, registers[instr.rt]))
-                //    continue;
+                tmp = registers[instr.rs] + instr.other;
+                value = registers[instr.rt];
+                target = raw_data[tmp/WORD];
+                target = (value & 0xffff) << 2*BYTE | (target & 0xffff);
+                raw_data[tmp/WORD] = target;
                 break;
             case OP_SB:
-                //if (!WriteMem((unsigned)(registers[instr.rs] + instr.other), 1, registers[instr.rt]))
-                //    continue;
+                tmp = registers[instr.rs] + instr.other;
+                value = registers[instr.rt];
+                target = raw_data[tmp/WORD];
+                if(tmp%WORD == 0)
+                    target &= 0xffffff;
+                else if(tmp%WORD == 1)
+                    target &= 0xff00ffff;
+                else if(tmp%WORD == 2)
+                    target &= 0xffff00ff;
+                else
+                    target &= 0xffffff00;
+                target |= (value & 0xff) << (3-tmp%WORD)*BYTE;
+                raw_data[tmp/WORD] = target;
                 break;
             case OP_LUI:
                 registers[instr.rt] = instr.other << 16;
@@ -180,7 +197,7 @@ int main() {
                 registers[instr.rt] = registers[instr.rs] | (instr.other & 0xffff);
                 break;
             case OP_NORI:
-                registers[instr.rt] = ~registers[instr.rs] & (instr.other & 0xffff);
+                registers[instr.rt] = ~(registers[instr.rs] & (instr.other & 0xffff));
                 break;
             case OP_SLTI:
                 if (registers[instr.rs] < instr.other)
@@ -190,15 +207,15 @@ int main() {
                 break;
             case OP_BEQ:
                 if (registers[instr.rs] == registers[instr.rt])
-                    nowPC = registers[NextPCReg] + IndexToAddr(instr.other);
+                    nowPC += IndexToAddr(instr.other);
                 break;
             case OP_BNE:
                 if (registers[instr.rs] != registers[instr.rt])
-                    nowPC= registers[NextPCReg] + IndexToAddr(instr.other);
+                    nowPC += IndexToAddr(instr.other);
                 break;
             case OP_BGTZ:
                 if (registers[instr.rs] > 0)
-                    nowPC = registers[NextPCReg] + IndexToAddr(instr.other);
+                    nowPC += IndexToAddr(instr.other);
                 break;
 
             case OP_J:
@@ -224,14 +241,13 @@ int main() {
         Instruction buf_inst(raw_instr[index]);
         instr = buf_inst;
 
-        snapshot << "cycle " << dec << cycle << endl;
-        writeState(&snapshot);
-        cycle++;
-
     }
 
+    snapshot << "cycle " << dec << cycle << endl;
+    writeState(&snapshot);
     snapshot.close();
 
+    cout << "Simulation succeed." << endl;
     return 0;
 }
 
@@ -297,9 +313,8 @@ void loadDimage(string path) {
 
 void writeState(fstream *snapshot) {
     for(int i = 0; i < PCReg-1; i++) {
-        *snapshot << "$" << setw(2) << setfill('0') << dec << i << ": 0x" << setw(8) << setfill('0') << hex << registers[i] << endl;
+        *snapshot << "$" << setw(2) << setfill('0') << dec << i << ": 0x" << setw(8) << setfill('0') << hex << uppercase << registers[i] << endl;
     }
-    *snapshot << "PC: 0x" << setw(8) << setfill('0') << hex << registers[PCReg] << endl;
-    *snapshot << endl;
+    *snapshot << "PC: 0x" << setw(8) << setfill('0') << hex << uppercase << registers[PCReg] << "\n\n\n";
 }
 
