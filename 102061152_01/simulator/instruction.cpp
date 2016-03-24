@@ -4,8 +4,11 @@
 
 #include "Instruction.h"
 
-Instruction::Instruction(unsigned int in) {
-    this->ori = in;
+Instruction::Instuction() {
+}
+
+Instruction::Instruction(int in) {
+    ori = in;
     Decode();
 }
 

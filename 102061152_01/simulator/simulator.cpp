@@ -17,12 +17,12 @@ using namespace std;
 #define PrevPCReg       35
 #define RegNum          35
 
-unsigned int *raw_instr;
-unsigned int PC_init;
+int *raw_instr;
+int PC_init;
 int instr_num;
-unsigned int *raw_data = new unsigned int[0x400/WORD];
+int *raw_data = new int[0x400/WORD];
 int data_num;
-unsigned int registers[RegNum];
+int registers[RegNum];
 
 
 void loadIimage(string);
@@ -129,17 +129,8 @@ int main() {
                     //RaiseException(AddressErrorException, tmp);
                     continue;
                 }
-                value = raw_data[tmp];
+                value = raw_data[tmp/WORD];
                 registers[instr.rt] = value;
-
-
-                tmp = registers[instr.rs] + instr.other;
-                registers[instr.rt] = raw_data[tmp/WORD];
-
-                //if(!ReadMem(tmp, 4, &value))
-                //    continue;
-                nextLoadReg = instr.rt;
-                nextLoadValue = value;
                 break;
             case OP_LH:
             case OP_LHU:
@@ -154,8 +145,6 @@ int main() {
                     value |= 0xffff0000;
                 else
                     value &= 0xffff;
-                nextLoadReg = instr.rt;
-                nextLoadValue = value;
                 break;
             case OP_LB:
             case OP_LBU:
@@ -166,14 +155,12 @@ int main() {
                     value |= 0xffffff00;
                 else
                     value &= 0xff;
-                nextLoadReg = instr.rt;
-                nextLoadValue = value;
                 break;
             case OP_SW:
                 tmp = registers[instr.rs] + instr.other;
-                registers[instr.rt] = raw_data[tmp/WORD];
-                //if (!WriteMem((unsigned)(registers[instr.rs] + instr.other), 4, registers[instr.rt]))
-                //    continue;
+
+                value = registers[instr.rt];
+                raw_data[tmp/WORD] = value;
                 break;
             case OP_SH:
                 //if (!WriteMem((unsigned)(registers[instr.rs] + instr.other), 2, registers[instr.rt]))
@@ -257,7 +244,6 @@ void loadIimage(string path) {
         char tmp[4];
         iimage.read(tmp, WORD);
         unsigned int num = (unsigned int)tmp[0]<<24 | (unsigned int)tmp[1]<<16 | (unsigned int)tmp[2]<<8 | (unsigned int)tmp[3];
-        cout << setw(8) << setfill('0') <<hex<< num << endl;
         if(i == 0) {
             registers[PCReg] = num;
             registers[PrevPCReg] = registers[PCReg] - WORD;
@@ -268,13 +254,12 @@ void loadIimage(string path) {
         }
     }
 
-    raw_instr = new unsigned int[instr_num];
+    raw_instr = new int[instr_num];
 
     for(int i = 0; i < instr_num; i++) {
         unsigned char tmp[4];
         iimage.read((char*)tmp, WORD);
         int num = (int)tmp[0] << 24 | (int)tmp[1]<<16 | (int)tmp[2]<<8 | (int)tmp[3];
-        cout << setw(8) << setfill('0') <<hex<< num << endl;
         raw_instr[i] = num;
     }
 
@@ -291,7 +276,6 @@ void loadDimage(string path) {
         char tmp[4];
         dimage.read(tmp, WORD);
         unsigned int num = (unsigned int)tmp[0]<<24 | (unsigned int)tmp[1]<<16 | (unsigned int)tmp[2]<<8 | (unsigned int)tmp[3];
-        cout << setw(8) << setfill('0') <<hex<< num << endl;
         if(i == 0) {
             registers[StackReg] = num;
         } else {
@@ -305,7 +289,6 @@ void loadDimage(string path) {
         unsigned char tmp[4];
         dimage.read((char*)tmp, WORD);
         int num = (int)tmp[0] << 24 | (int)tmp[1]<<16 | (int)tmp[2]<<8 | (int)tmp[3];
-        cout << setw(8) << setfill('0') <<hex<< num << endl;
         raw_data[i] = num;
     }
 
@@ -320,14 +303,3 @@ void writeState(fstream *snapshot) {
     *snapshot << endl;
 }
 
-bool readMem() {
-
-
-
-    //if(!ReadMem(tmp, 4, &value))
-
-}
-
-bool writeMem() {
-
-}

@@ -46,11 +46,11 @@ class Instruction {
 public:
 
     Instruction();
-    Instruction(unsigned int);
+    Instruction(int);
 
     void Decode();
 
-    unsigned int ori;
+    int ori;
     int operation;
     char rs, rt, rd;
     int other;
