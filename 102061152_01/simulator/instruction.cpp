@@ -2,10 +2,8 @@
 // Created by selly on 2016/3/23.
 //
 
-#include "Instruction.h"
+#include "instruction.h"
 
-Instruction::Instuction() {
-}
 
 Instruction::Instruction(int in) {
     ori = in;

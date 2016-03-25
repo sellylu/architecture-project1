@@ -28,17 +28,18 @@ int data_num;
 int registers[RegNum];
 
 
-void loadIimage(string);
-void loadDimage(string);
-fstream snapshot;
+void loadIimage();
+void loadDimage();
+fstream snapshot, error;
 void writeState(fstream *);
+void writeError();
 
 int main() {
 
-    loadIimage("iimage.bin");
-    loadDimage("dimage.bin");
+    loadIimage();
+    loadDimage();
     Instruction instr(raw_instr[0]);
-    snapshot.open("snapshot.rpt", ios::out);
+    snapshot.open("../testcase/snapshot.rpt", ios::out);
     int cycle = 0;
 
     while(instr.operation != OP_HALT && cycle <= MAX_CYCLE){
@@ -251,9 +252,9 @@ int main() {
     return 0;
 }
 
-void loadIimage(string path) {
+void loadIimage() {
     fstream iimage;
-    iimage.open(path, ios::binary | ios::in);
+    iimage.open("../testcase/iimage.bin", ios::binary | ios::in);
     assert(iimage);
 
     for(int i = 0; i < 2; i++) {
@@ -283,9 +284,9 @@ void loadIimage(string path) {
 
 }
 
-void loadDimage(string path) {
+void loadDimage() {
     fstream dimage;
-    dimage.open(path, ios::binary | ios::in);
+    dimage.open("../testcase/dimage.bin", ios::binary | ios::in);
     assert(dimage);
 
     for(int i = 0; i < 2; i++) {
@@ -318,3 +319,7 @@ void writeState(fstream *snapshot) {
     *snapshot << "PC: 0x" << setw(8) << setfill('0') << hex << uppercase << registers[PCReg] << "\n\n\n";
 }
 
+void writeError() {
+	error.open("../testcase/error_dump.rpt", ios::out);
+	error.close();
+}
