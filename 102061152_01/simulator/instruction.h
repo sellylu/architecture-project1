@@ -44,7 +44,7 @@
 
 class Instruction {
 public:
-
+	
     Instruction(int);
 
     void Decode();

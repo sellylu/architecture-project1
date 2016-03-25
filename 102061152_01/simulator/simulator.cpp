@@ -22,7 +22,7 @@ using namespace std;
 
 enum ERROR { WriteRegZero , NumOverflow, AddrOverflow, DataMisaligned };
 
-Instruction instr;
+Instruction instr(0);
 int *raw_instr = new int[0x400/WORD];
 int PC_init = 0;
 int instr_num = 0;
@@ -37,6 +37,7 @@ void loadIimage();
 void loadDimage();
 fstream snapshot, error;
 void writeReg();
+bool checkNumOverflow(int, int, int*);
 int writeError(int);
 void setPC();
 
@@ -68,11 +69,8 @@ int main() {
 
                 switch (instr.other & 0x3f) {
                     case FUNC_ADD:
-                        sum = registers[instr.rs] + registers[instr.rt];
-                        //if (!((registers[instr.rs] ^ registers[instr.rt]) & SIGN_BIT) && ((registers[instr.rs] ^ sum) & SIGN_BIT)) {
-                        //RaiseException(OverflowException, 0);
-                        //continue;
-                        //}
+                        if(!checkNumOverflow(registers[instr.rs], registers[instr.rt], &sum))
+                            break;
                         registers[instr.rd] = sum;
                         break;
                     case FUNC_ADDU:
@@ -80,10 +78,9 @@ int main() {
                         break;
                     case FUNC_SUB:
                         sum = registers[instr.rs] - registers[instr.rt];
-                        if (!((registers[instr.rs] ^ registers[instr.rt]) & SIGN_BIT) &&
-                            ((registers[instr.rs] ^ sum) & SIGN_BIT)) {
-                            //RaiseException(OverflowException, 0);
-                            continue;
+                        if (((registers[instr.rs] ^ registers[instr.rt]) & SIGN_BIT) && ((registers[instr.rs] ^ sum) & SIGN_BIT)) {
+                            writeError(NumOverflow);
+                            break;
                         }
                         registers[instr.rd] = sum;
                         break;
@@ -127,20 +124,22 @@ int main() {
                 }
                 break;
             case OP_ADDI:
-                sum = registers[instr.rs] + instr.other;
-                //if (!((registers[instr.rs] ^ instr.other) & SIGN_BIT) && ((instr.other ^ sum) & SIGN_BIT)) {
-                //RaiseException(OverflowException, 0);
-                //continue;
-                //}
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &sum))
+                    break;
                 registers[instr.rt] = sum;
                 break;
             case OP_ADDIU:
                 registers[instr.rt] = registers[instr.rs] + instr.other;
                 break;
             case OP_LW:
-                tmp = registers[instr.rs] + instr.other;
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
+                    break;
                 if(tmp%WORD != 0x0) {
                     writeError(DataMisaligned);
+                    assert(false);
+                }
+                if(tmp >= 0x400) {
+                    writeError(AddrOverflow);
                     assert(false);
                 }
                 value = raw_data[tmp / WORD];
@@ -148,9 +147,14 @@ int main() {
                 break;
             case OP_LH:
             case OP_LHU:
-                tmp = registers[instr.rs] + instr.other;
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
+                    break;
                 if(tmp%WORD != 0 && tmp%WORD != 2) {
                     writeError(DataMisaligned);
+                    assert(false);
+                }
+                if(tmp >= 0x400) {
+                    writeError(AddrOverflow);
                     assert(false);
                 }
                 value = raw_data[tmp / WORD] << BYTE*(tmp%WORD);
@@ -163,7 +167,12 @@ int main() {
                 break;
             case OP_LB:
             case OP_LBU:
-                tmp = registers[instr.rs] + instr.other;
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
+                    break;
+                if(tmp >= 0x400) {
+                    writeError(AddrOverflow);
+                    assert(false);
+                }
                 value = raw_data[tmp/WORD] << BYTE*(tmp%WORD);
                 if ((value & SIGN_BIT) && (instr.operation == OP_LB))
                     registers[instr.rt] = value >> 3*BYTE;
@@ -173,18 +182,28 @@ int main() {
                 }
                 break;
             case OP_SW:
-                tmp = registers[instr.rs] + instr.other;
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
+                    break;
                 if(tmp%WORD != 0x0) {
                     writeError(DataMisaligned);
+                    assert(false);
+                }
+                if(tmp >= 0x400) {
+                    writeError(AddrOverflow);
                     assert(false);
                 }
                 value = registers[instr.rt];
                 raw_data[tmp/WORD] = value;
                 break;
             case OP_SH:
-                tmp = registers[instr.rs] + instr.other;
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
+                    break;
                 if(tmp%WORD != 0 || tmp%WORD != 2) {
                     writeError(DataMisaligned);
+                    assert(false);
+                }
+                if(tmp >= 0x400) {
+                    writeError(AddrOverflow);
                     assert(false);
                 }
                 value = registers[instr.rt];
@@ -196,7 +215,12 @@ int main() {
                 raw_data[tmp/WORD] = target;
                 break;
             case OP_SB:
-                tmp = registers[instr.rs] + instr.other;
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
+                    break;
+                if(tmp >= 0x400) {
+                    writeError(AddrOverflow);
+                    assert(false);
+                }
                 value = registers[instr.rt];
                 target = raw_data[tmp/WORD];
                 if(tmp%WORD == 0)
@@ -229,16 +253,22 @@ int main() {
                     registers[instr.rt] = 0;
                 break;
             case OP_BEQ:
+                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                    break;
                 if (registers[instr.rs] == registers[instr.rt])
-                    nowPC += IndexToAddr(instr.other);
+                    nowPC = sum;
                 break;
             case OP_BNE:
+                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                    break;
                 if (registers[instr.rs] != registers[instr.rt])
-                    nowPC += IndexToAddr(instr.other);
+                    nowPC = sum;
                 break;
             case OP_BGTZ:
+                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                    break;
                 if (registers[instr.rs] > 0)
-                    nowPC += IndexToAddr(instr.other);
+                    nowPC = sum;
                 break;
 
             case OP_J:
@@ -348,6 +378,15 @@ void writeReg() {
     snapshot.close();
 }
 
+bool checkNumOverflow(int a, int b, int *sum) {
+    *sum = a + b;
+    if (!((a ^ b) & SIGN_BIT) && ((a ^ *sum) & SIGN_BIT)) {
+        writeError(NumOverflow);
+        return 0;
+    }
+    return 1;
+}
+
 int writeError(int type) {
     error.open("error_dump.rpt", ios::out | ios::app);
 
@@ -375,7 +414,6 @@ int writeError(int type) {
     }
 
 }
-
 
 void setPC() {
     registers[PrevPCReg] = registers[PCReg];
