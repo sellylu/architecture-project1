@@ -20,40 +20,51 @@ using namespace std;
 #define PrevPCReg       35
 #define RegNum          36
 
-int *raw_instr;
-int PC_init;
-int instr_num;
+enum ERROR { WriteRegZero , NumOverflow, AddrOverflow, DataMisaligned };
+
+Instruction instr;
+int *raw_instr = new int[0x400/WORD];
+int PC_init = 0;
+int instr_num = 0;
 int *raw_data = new int[0x400/WORD];
-int data_num;
+int data_num = 0;
 int registers[RegNum];
+int nowPC = 0;
+int cycle = 0;
 
-
+void Initialize();
 void loadIimage();
 void loadDimage();
 fstream snapshot, error;
-void writeState(fstream *);
-void writeError();
+void writeReg();
+int writeError(int);
+void setPC();
 
 int main() {
 
-    loadIimage();
-    loadDimage();
-    Instruction instr(raw_instr[0]);
-    snapshot.open("../testcase/snapshot.rpt", ios::out);
-    int cycle = 0;
+    Initialize();
 
     while(instr.operation != OP_HALT && cycle <= MAX_CYCLE){
 
-        snapshot << "cycle " << dec << cycle << endl;
-        writeState(&snapshot);
-        cycle++;
-
-        int nowPC = registers[NextPCReg];
+        nowPC = registers[NextPCReg];
         int sum, tmp, value, target;
         unsigned int uint;
 
+        if(instr.operation >= 0x8 && instr.operation <= 0x24 && instr.rt == 0) {
+            writeError(WriteRegZero);
+            setPC();
+            writeReg();
+            cycle++;
+            continue;
+        }
+
         switch(instr.operation) {
             case R_FORMAT:
+
+                if(instr.other != FUNC_JR && instr.rd == 0 && instr.ori != 0) {
+                    writeError(WriteRegZero);
+                    break;
+                }
 
                 switch (instr.other & 0x3f) {
                     case FUNC_ADD:
@@ -128,9 +139,9 @@ int main() {
                 break;
             case OP_LW:
                 tmp = registers[instr.rs] + instr.other;
-                if (tmp & 0x3) {
-                    //RaiseException(AddressErrorException, tmp);
-                    continue;
+                if(tmp%WORD != 0x0) {
+                    writeError(DataMisaligned);
+                    assert(false);
                 }
                 value = raw_data[tmp / WORD];
                 registers[instr.rt] = value;
@@ -138,9 +149,9 @@ int main() {
             case OP_LH:
             case OP_LHU:
                 tmp = registers[instr.rs] + instr.other;
-                if (tmp & 0x1) {
-                    //RaiseException(AddressErrorException, tmp);
-                    continue;
+                if(tmp%WORD != 0 && tmp%WORD != 2) {
+                    writeError(DataMisaligned);
+                    assert(false);
                 }
                 value = raw_data[tmp / WORD] << BYTE*(tmp%WORD);
                 if ((value & SIGN_BIT) && (instr.operation == OP_LH))
@@ -163,14 +174,25 @@ int main() {
                 break;
             case OP_SW:
                 tmp = registers[instr.rs] + instr.other;
+                if(tmp%WORD != 0x0) {
+                    writeError(DataMisaligned);
+                    assert(false);
+                }
                 value = registers[instr.rt];
                 raw_data[tmp/WORD] = value;
                 break;
             case OP_SH:
                 tmp = registers[instr.rs] + instr.other;
+                if(tmp%WORD != 0 || tmp%WORD != 2) {
+                    writeError(DataMisaligned);
+                    assert(false);
+                }
                 value = registers[instr.rt];
                 target = raw_data[tmp/WORD];
-                target = (value & 0xffff) << 2*BYTE | (target & 0xffff);
+                if(tmp%WORD == 0)
+                    target = (value & 0xffff) << 2*BYTE | (target & 0xffff);
+                if(tmp%WORD == 2)
+                    target = (value & 0xffff) | (target & 0xffff0000);
                 raw_data[tmp/WORD] = target;
                 break;
             case OP_SB:
@@ -178,7 +200,7 @@ int main() {
                 value = registers[instr.rt];
                 target = raw_data[tmp/WORD];
                 if(tmp%WORD == 0)
-                    target &= 0xffffff;
+                    target &= 0x00ffffff;
                 else if(tmp%WORD == 1)
                     target &= 0xff00ffff;
                 else if(tmp%WORD == 2)
@@ -232,29 +254,36 @@ int main() {
                 assert(false);
         }
 
-        registers[PrevPCReg] = registers[PCReg];
-        registers[PCReg] = nowPC;
-        registers[NextPCReg] = nowPC + WORD;
+        setPC();
 
-        int index = (registers[PCReg] - PC_init)/WORD;
-        if(index > instr_num)
-            assert(false);
-        Instruction buf_inst(raw_instr[index]);
-        instr = buf_inst;
+        writeReg();
+        cycle++;
 
     }
 
-    snapshot << "cycle " << dec << cycle << endl;
-    writeState(&snapshot);
     snapshot.close();
 
     cout << "Simulation succeed." << endl;
     return 0;
 }
 
+
+void Initialize() {
+    loadIimage();
+    loadDimage();
+    error.open("error_dump.rpt", ios::out);
+    error.close();
+
+    instr = Instruction(raw_instr[0]);
+    snapshot.open("snapshot.rpt", ios::out);
+    snapshot.close();
+    writeReg();
+    cycle++;
+}
+
 void loadIimage() {
     fstream iimage;
-    iimage.open("../testcase/iimage.bin", ios::binary | ios::in);
+    iimage.open("iimage.bin", ios::binary | ios::in);
     assert(iimage);
 
     for(int i = 0; i < 2; i++) {
@@ -271,8 +300,6 @@ void loadIimage() {
         }
     }
 
-    raw_instr = new int[instr_num];
-
     for(int i = 0; i < instr_num; i++) {
         unsigned char tmp[4];
         iimage.read((char*)tmp, WORD);
@@ -286,7 +313,7 @@ void loadIimage() {
 
 void loadDimage() {
     fstream dimage;
-    dimage.open("../testcase/dimage.bin", ios::binary | ios::in);
+    dimage.open("dimage.bin", ios::binary | ios::in);
     assert(dimage);
 
     for(int i = 0; i < 2; i++) {
@@ -300,8 +327,6 @@ void loadDimage() {
         }
     }
 
-    //raw_data = new unsigned int[data_num];
-
     for(int i = 0; i < data_num; i++) {
         unsigned char tmp[4];
         dimage.read((char*)tmp, WORD);
@@ -312,14 +337,53 @@ void loadDimage() {
     dimage.close();
 }
 
-void writeState(fstream *snapshot) {
+void writeReg() {
+    snapshot.open("snapshot.rpt", ios::out | ios::app);
+
+    snapshot << "cycle " << dec << cycle << endl;
     for(int i = 0; i < PCReg-1; i++) {
-        *snapshot << "$" << setw(2) << setfill('0') << dec << i << ": 0x" << setw(8) << setfill('0') << hex << uppercase << registers[i] << endl;
+        snapshot << "$" << setw(2) << setfill('0') << dec << i << ": 0x" << setw(8) << setfill('0') << hex << uppercase << registers[i] << endl;
     }
-    *snapshot << "PC: 0x" << setw(8) << setfill('0') << hex << uppercase << registers[PCReg] << "\n\n\n";
+    snapshot << "PC: 0x" << setw(8) << setfill('0') << hex << uppercase << registers[PCReg] << "\n\n\n";
+    snapshot.close();
 }
 
-void writeError() {
-	error.open("../testcase/error_dump.rpt", ios::out);
-	error.close();
+int writeError(int type) {
+    error.open("error_dump.rpt", ios::out | ios::app);
+
+    error << "In cycle " << cycle << ": ";
+    switch(type) {
+        case WriteRegZero:
+            error << "Write $0 Error" << endl;
+            error.close();
+            return 1;
+        case NumOverflow:
+            error << "Number Overflow" << endl;
+            error.close();
+            return 1;
+        case AddrOverflow:
+            error << "Address Overflow" << endl;
+            error.close();
+            return 0;
+        case DataMisaligned:
+            error << "Misalignment Error" << endl;
+            error.close();
+            return 0;
+        default:
+            error.close();
+            return 0;
+    }
+
+}
+
+
+void setPC() {
+    registers[PrevPCReg] = registers[PCReg];
+    registers[PCReg] = nowPC;
+    registers[NextPCReg] = nowPC + WORD;
+
+    int index = (registers[PCReg] - PC_init)/WORD;
+    if(index > instr_num)
+        assert(false);
+    instr = Instruction(raw_instr[index]);
 }
