@@ -7,6 +7,7 @@
 using namespace std;
 
 #define MAX_CYCLE   500000
+#define MAX_MEMORY  0x400
 
 #define WORD        4
 #define BYTE        8
@@ -15,18 +16,19 @@ using namespace std;
 
 #define StackReg        29
 #define ReturnAddrReg   31
-#define PCReg           33
-#define NextPCReg       34
-#define PrevPCReg       35
-#define RegNum          36
+#define PCReg           32
+#define NextPCReg       33
+#define PrevPCReg       34
+#define RegNum          35
 
 enum ERROR { WriteRegZero , NumOverflow, AddrOverflow, DataMisaligned };
 
+fstream snapshot, error;
 Instruction instr(0);
-int *raw_instr = new int[0x400/WORD];
+int *raw_instr = new int[MAX_MEMORY/WORD];
 int PC_init = 0;
 int instr_num = 0;
-int *raw_data = new int[0x400/WORD];
+int *raw_data = new int[MAX_MEMORY/WORD];
 int data_num = 0;
 int registers[RegNum];
 int nowPC = 0;
@@ -35,10 +37,9 @@ int cycle = 0;
 void Initialize();
 void loadIimage();
 void loadDimage();
-fstream snapshot, error;
 void writeReg();
 bool checkNumOverflow(int, int, int*);
-int writeError(int);
+void writeError(int);
 void setPC();
 
 int main() {
@@ -47,15 +48,12 @@ int main() {
 
     while(instr.operation != OP_HALT && cycle <= MAX_CYCLE){
 
-        nowPC = registers[NextPCReg];
         int sum, tmp, value, target;
         unsigned int uint;
 
         if(instr.operation >= 0x8 && instr.operation <= 0x24 && instr.rt == 0) {
             writeError(WriteRegZero);
             setPC();
-            writeReg();
-            cycle++;
             continue;
         }
 
@@ -120,7 +118,7 @@ int main() {
                         nowPC = registers[instr.rs];
                         break;
                     default:
-                        assert(false);
+                        return 0;
                 }
                 break;
             case OP_ADDI:
@@ -134,13 +132,13 @@ int main() {
             case OP_LW:
                 if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
                     break;
+                if(tmp >= MAX_MEMORY) {
+                    writeError(AddrOverflow);
+                    return 0;
+                }
                 if(tmp%WORD != 0x0) {
                     writeError(DataMisaligned);
-                    assert(false);
-                }
-                if(tmp >= 0x400) {
-                    writeError(AddrOverflow);
-                    assert(false);
+                    return 0;
                 }
                 value = raw_data[tmp / WORD];
                 registers[instr.rt] = value;
@@ -149,13 +147,13 @@ int main() {
             case OP_LHU:
                 if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
                     break;
+                if(tmp >= MAX_MEMORY) {
+                    writeError(AddrOverflow);
+                    return 0;
+                }
                 if(tmp%WORD != 0 && tmp%WORD != 2) {
                     writeError(DataMisaligned);
-                    assert(false);
-                }
-                if(tmp >= 0x400) {
-                    writeError(AddrOverflow);
-                    assert(false);
+                    return 0;
                 }
                 value = raw_data[tmp / WORD] << BYTE*(tmp%WORD);
                 if ((value & SIGN_BIT) && (instr.operation == OP_LH))
@@ -169,9 +167,9 @@ int main() {
             case OP_LBU:
                 if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
                     break;
-                if(tmp >= 0x400) {
+                if(tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
-                    assert(false);
+                    return 0;
                 }
                 value = raw_data[tmp/WORD] << BYTE*(tmp%WORD);
                 if ((value & SIGN_BIT) && (instr.operation == OP_LB))
@@ -184,13 +182,13 @@ int main() {
             case OP_SW:
                 if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
                     break;
+                if(tmp >= MAX_MEMORY) {
+                    writeError(AddrOverflow);
+                    return 0;
+                }
                 if(tmp%WORD != 0x0) {
                     writeError(DataMisaligned);
-                    assert(false);
-                }
-                if(tmp >= 0x400) {
-                    writeError(AddrOverflow);
-                    assert(false);
+                    return 0;
                 }
                 value = registers[instr.rt];
                 raw_data[tmp/WORD] = value;
@@ -198,13 +196,13 @@ int main() {
             case OP_SH:
                 if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
                     break;
-                if(tmp%WORD != 0 || tmp%WORD != 2) {
-                    writeError(DataMisaligned);
-                    assert(false);
-                }
-                if(tmp >= 0x400) {
+                if(tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
-                    assert(false);
+                    return 0;
+                }
+                if(tmp%WORD != 0 && tmp%WORD != 2) {
+                    writeError(DataMisaligned);
+                    return 0;
                 }
                 value = registers[instr.rt];
                 target = raw_data[tmp/WORD];
@@ -217,9 +215,9 @@ int main() {
             case OP_SB:
                 if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
                     break;
-                if(tmp >= 0x400) {
+                if(tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
-                    assert(false);
+                    return 0;
                 }
                 value = registers[instr.rt];
                 target = raw_data[tmp/WORD];
@@ -279,19 +277,13 @@ int main() {
                 nowPC = (nowPC & 0xf0000000) | IndexToAddr(instr.other);
                 break;
             case OP_HALT:
-                break;
             default:
-                assert(false);
+                return 0;
         }
 
         setPC();
 
-        writeReg();
-        cycle++;
-
     }
-
-    snapshot.close();
 
     cout << "Simulation succeed." << endl;
     return 0;
@@ -308,7 +300,6 @@ void Initialize() {
     snapshot.open("snapshot.rpt", ios::out);
     snapshot.close();
     writeReg();
-    cycle++;
 }
 
 void loadIimage() {
@@ -371,11 +362,12 @@ void writeReg() {
     snapshot.open("snapshot.rpt", ios::out | ios::app);
 
     snapshot << "cycle " << dec << cycle << endl;
-    for(int i = 0; i < PCReg-1; i++) {
+    for(int i = 0; i < PCReg; i++) {
         snapshot << "$" << setw(2) << setfill('0') << dec << i << ": 0x" << setw(8) << setfill('0') << hex << uppercase << registers[i] << endl;
     }
     snapshot << "PC: 0x" << setw(8) << setfill('0') << hex << uppercase << registers[PCReg] << "\n\n\n";
     snapshot.close();
+    cycle++;
 }
 
 bool checkNumOverflow(int a, int b, int *sum) {
@@ -387,41 +379,39 @@ bool checkNumOverflow(int a, int b, int *sum) {
     return 1;
 }
 
-int writeError(int type) {
+void writeError(int type) {
     error.open("error_dump.rpt", ios::out | ios::app);
 
     error << "In cycle " << cycle << ": ";
     switch(type) {
         case WriteRegZero:
             error << "Write $0 Error" << endl;
-            error.close();
-            return 1;
+            break;
         case NumOverflow:
             error << "Number Overflow" << endl;
-            error.close();
-            return 1;
+            break;
         case AddrOverflow:
             error << "Address Overflow" << endl;
-            error.close();
-            return 0;
+            break;
         case DataMisaligned:
             error << "Misalignment Error" << endl;
-            error.close();
-            return 0;
+            break;
         default:
-            error.close();
-            return 0;
+            error << "Something Wrong" << endl;
     }
-
+    error.close();
 }
+
 
 void setPC() {
     registers[PrevPCReg] = registers[PCReg];
     registers[PCReg] = nowPC;
     registers[NextPCReg] = nowPC + WORD;
+    nowPC = registers[NextPCReg];
 
     int index = (registers[PCReg] - PC_init)/WORD;
     if(index > instr_num)
         assert(false);
     instr = Instruction(raw_instr[index]);
+    writeReg();
 }
