@@ -1,2 +1,5 @@
 # ignore archiTA
 archiTA/
+
+102061152_01/simulator/*.o
+102061152_01/simulator/single_cycle
