@@ -38,6 +38,7 @@ void Initialize();
 void loadIimage();
 void loadDimage();
 void writeReg();
+
 bool checkNumOverflow(int, int, int*);
 void writeError(int);
 void setPC();
@@ -48,39 +49,41 @@ int main() {
 
     while(instr.operation != OP_HALT && cycle <= MAX_CYCLE){
 
+        bool brk = false, halt = false;
+
         int sum, tmp, value, target;
         unsigned int uint;
 
-        if(instr.operation >= 0x8 && instr.operation <= 0x24 && instr.rt == 0) {
+        if(((instr.operation >= 0x20 && instr.operation <= 0x24) || instr.operation == OP_ADDI) && instr.rt == 0) {
             writeError(WriteRegZero);
-            setPC();
-            continue;
+            brk = true;
+        } else if(instr.operation < 0x20 && instr.operation >= 0x09 && instr.rt == 0) {
+            writeError(WriteRegZero);
+            break;
         }
 
         switch(instr.operation) {
             case R_FORMAT:
 
-                if(instr.other != FUNC_JR && instr.rd == 0 && instr.ori != 0) {
+                if(instr.other != FUNC_JR && instr.other != FUNC_ADD && instr.other != FUNC_SUB && instr.rd == 0 && instr.ori != 0) {
                     writeError(WriteRegZero);
                     break;
+                } else if(instr.other != FUNC_JR && instr.rd == 0) {
+                    writeError(WriteRegZero);
+                    brk = true;
                 }
 
                 switch (instr.other & 0x3f) {
                     case FUNC_ADD:
-                        if(!checkNumOverflow(registers[instr.rs], registers[instr.rt], &sum))
-                            break;
-                        registers[instr.rd] = sum;
+                        if(!checkNumOverflow(registers[instr.rs], registers[instr.rt], &sum) && !brk)
+                            registers[instr.rd] = sum;
                         break;
                     case FUNC_ADDU:
                         registers[instr.rd] = registers[instr.rs] + registers[instr.rt];
                         break;
                     case FUNC_SUB:
-                        sum = registers[instr.rs] - registers[instr.rt];
-                        if (((registers[instr.rs] ^ registers[instr.rt]) & SIGN_BIT) && ((registers[instr.rs] ^ sum) & SIGN_BIT)) {
-                            writeError(NumOverflow);
-                            break;
-                        }
-                        registers[instr.rd] = sum;
+                        if(!checkNumOverflow(registers[instr.rs], -registers[instr.rt], &sum) && !brk)
+                            registers[instr.rd] = sum;
                         break;
                     case FUNC_AND:
                         registers[instr.rd] = registers[instr.rs] & registers[instr.rt];
@@ -107,7 +110,7 @@ int main() {
                         registers[instr.rd] = registers[instr.rt] << instr.other;
                         break;
                     case FUNC_SRL:
-                        uint = (unsigned int)registers[instr.rt];
+                        uint = (unsigned int) registers[instr.rt];
                         uint >>= instr.other;
                         registers[instr.rd] = uint;
                         break;
@@ -121,116 +124,130 @@ int main() {
                         return 0;
                 }
                 break;
+
             case OP_ADDI:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &sum))
-                    break;
-                registers[instr.rt] = sum;
+                if(!checkNumOverflow(registers[instr.rs], instr.other, &sum) && !brk)
+                    registers[instr.rt] = sum;
                 break;
             case OP_ADDIU:
                 registers[instr.rt] = registers[instr.rs] + instr.other;
                 break;
             case OP_LW:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
-                    break;
-                if(tmp >= MAX_MEMORY) {
+                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
-                    return 0;
+                    halt = true;
                 }
-                if(tmp%WORD != 0x0) {
+                if (tmp % WORD != 0x0) {
                     writeError(DataMisaligned);
                     return 0;
                 }
-                value = raw_data[tmp / WORD];
-                registers[instr.rt] = value;
+                if(halt)
+                    return 0;
+                if(!brk) {
+                    value = raw_data[tmp / WORD];
+                    registers[instr.rt] = value;
+                }
                 break;
             case OP_LH:
             case OP_LHU:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
-                    break;
-                if(tmp >= MAX_MEMORY) {
+                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
-                    return 0;
+                    halt = true;
                 }
-                if(tmp%WORD != 0 && tmp%WORD != 2) {
+                if (tmp % WORD != 0 && tmp % WORD != 2) {
                     writeError(DataMisaligned);
                     return 0;
                 }
-                value = raw_data[tmp / WORD] << BYTE*(tmp%WORD);
-                if ((value & SIGN_BIT) && (instr.operation == OP_LH))
-                    registers[instr.rt] = value >> 2*BYTE;
-                else {
-                    uint = (unsigned int)value;
-                    registers[instr.rt] = uint >> 2*BYTE;
+                if(halt)
+                    return 0;
+                if(!brk) {
+                    value = raw_data[tmp / WORD] << BYTE * (tmp % WORD);
+                    if ((value & SIGN_BIT) && (instr.operation == OP_LH))
+                        registers[instr.rt] = value >> 2 * BYTE;
+                    else {
+                        uint = (unsigned int) value;
+                        registers[instr.rt] = uint >> 2 * BYTE;
+                    }
                 }
                 break;
             case OP_LB:
             case OP_LBU:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
-                    break;
-                if(tmp >= MAX_MEMORY) {
+                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
                     return 0;
                 }
-                value = raw_data[tmp/WORD] << BYTE*(tmp%WORD);
-                if ((value & SIGN_BIT) && (instr.operation == OP_LB))
-                    registers[instr.rt] = value >> 3*BYTE;
-                else {
-                    uint = (unsigned int)value;
-                    registers[instr.rt] = uint >> 3*BYTE;
+                if(!brk) {
+                    value = raw_data[tmp / WORD] << BYTE * (tmp % WORD);
+                    if ((value & SIGN_BIT) && (instr.operation == OP_LB))
+                        registers[instr.rt] = value >> 3 * BYTE;
+                    else {
+                        uint = (unsigned int) value;
+                        registers[instr.rt] = uint >> 3 * BYTE;
+                    }
                 }
                 break;
             case OP_SW:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
-                    break;
-                if(tmp >= MAX_MEMORY) {
+                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
-                    return 0;
+                    halt = true;
                 }
-                if(tmp%WORD != 0x0) {
+                if (tmp % WORD != 0x0) {
                     writeError(DataMisaligned);
                     return 0;
                 }
-                value = registers[instr.rt];
-                raw_data[tmp/WORD] = value;
+                if(halt)
+                    return 0;
+                if(!brk) {
+                    value = registers[instr.rt];
+                    raw_data[tmp / WORD] = value;
+                }
                 break;
             case OP_SH:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
-                    break;
-                if(tmp >= MAX_MEMORY) {
+                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
-                    return 0;
+                    halt = true;
                 }
-                if(tmp%WORD != 0 && tmp%WORD != 2) {
+                if (tmp % WORD != 0 && tmp % WORD != 2) {
                     writeError(DataMisaligned);
                     return 0;
                 }
-                value = registers[instr.rt];
-                target = raw_data[tmp/WORD];
-                if(tmp%WORD == 0)
-                    target = (value & 0xffff) << 2*BYTE | (target & 0xffff);
-                if(tmp%WORD == 2)
-                    target = (value & 0xffff) | (target & 0xffff0000);
-                raw_data[tmp/WORD] = target;
+                if(halt)
+                    return 0;
+                if(!brk) {
+                    value = registers[instr.rt];
+                    target = raw_data[tmp / WORD];
+                    if (tmp % WORD == 0)
+                        target = (value & 0xffff) << 2 * BYTE | (target & 0xffff);
+                    if (tmp % WORD == 2)
+                        target = (value & 0xffff) | (target & 0xffff0000);
+                    raw_data[tmp / WORD] = target;
+                }
                 break;
             case OP_SB:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &tmp))
-                    break;
-                if(tmp >= MAX_MEMORY) {
+                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
                     return 0;
                 }
-                value = registers[instr.rt];
-                target = raw_data[tmp/WORD];
-                if(tmp%WORD == 0)
-                    target &= 0x00ffffff;
-                else if(tmp%WORD == 1)
-                    target &= 0xff00ffff;
-                else if(tmp%WORD == 2)
-                    target &= 0xffff00ff;
-                else
-                    target &= 0xffffff00;
-                target |= (value & 0xff) << (3-tmp%WORD)*BYTE;
-                raw_data[tmp/WORD] = target;
+                if(!brk) {
+                    value = registers[instr.rt];
+                    target = raw_data[tmp / WORD];
+                    if (tmp % WORD == 0)
+                        target &= 0x00ffffff;
+                    else if (tmp % WORD == 1)
+                        target &= 0xff00ffff;
+                    else if (tmp % WORD == 2)
+                        target &= 0xffff00ff;
+                    else
+                        target &= 0xffffff00;
+                    target |= (value & 0xff) << (3 - tmp % WORD) * BYTE;
+                    raw_data[tmp / WORD] = target;
+                }
                 break;
             case OP_LUI:
                 registers[instr.rt] = instr.other << 16;
@@ -251,22 +268,19 @@ int main() {
                     registers[instr.rt] = 0;
                 break;
             case OP_BEQ:
-                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
-                    break;
-                if (registers[instr.rs] == registers[instr.rt])
-                    nowPC = sum;
+                if(checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                    if (registers[instr.rs] == registers[instr.rt])
+                        nowPC = sum;
                 break;
             case OP_BNE:
-                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
-                    break;
-                if (registers[instr.rs] != registers[instr.rt])
-                    nowPC = sum;
+                if(checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                    if (registers[instr.rs] != registers[instr.rt])
+                        nowPC = sum;
                 break;
             case OP_BGTZ:
-                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
-                    break;
-                if (registers[instr.rs] > 0)
-                    nowPC = sum;
+                if(checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                    if (registers[instr.rs] > 0)
+                        nowPC = sum;
                 break;
 
             case OP_J:
@@ -374,9 +388,9 @@ bool checkNumOverflow(int a, int b, int *sum) {
     *sum = a + b;
     if (!((a ^ b) & SIGN_BIT) && ((a ^ *sum) & SIGN_BIT)) {
         writeError(NumOverflow);
-        return 0;
+        return 1;
     }
-    return 1;
+    return 0;
 }
 
 void writeError(int type) {
@@ -401,7 +415,6 @@ void writeError(int type) {
     }
     error.close();
 }
-
 
 void setPC() {
     registers[PrevPCReg] = registers[PCReg];
