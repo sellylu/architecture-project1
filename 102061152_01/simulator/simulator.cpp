@@ -140,10 +140,13 @@ int main() {
                 }
                 if (tmp % WORD != 0x0) {
                     writeError(DataMisaligned);
+                    cout << "Simulation succeed." << endl;
                     return 0;
                 }
-                if(halt)
+                if(halt) {
+                    cout << "Simulation succeed." << endl;
                     return 0;
+                }
                 if(!brk) {
                     value = raw_data[tmp / WORD];
                     registers[instr.rt] = value;
@@ -158,10 +161,13 @@ int main() {
                 }
                 if (tmp % WORD != 0 && tmp % WORD != 2) {
                     writeError(DataMisaligned);
+                    cout << "Simulation succeed." << endl;
                     return 0;
                 }
-                if(halt)
+                if(halt) {
+                    cout << "Simulation succeed." << endl;
                     return 0;
+                }
                 if(!brk) {
                     value = raw_data[tmp / WORD] << BYTE * (tmp % WORD);
                     if ((value & SIGN_BIT) && (instr.operation == OP_LH))
@@ -177,6 +183,7 @@ int main() {
                 brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
                 if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
+                    cout << "Simulation succeed." << endl;
                     return 0;
                 }
                 if(!brk) {
@@ -197,10 +204,13 @@ int main() {
                 }
                 if (tmp % WORD != 0x0) {
                     writeError(DataMisaligned);
+                    cout << "Simulation succeed." << endl;
                     return 0;
                 }
-                if(halt)
+                if(halt) {
+                    cout << "Simulation succeed." << endl;
                     return 0;
+                }
                 if(!brk) {
                     value = registers[instr.rt];
                     raw_data[tmp / WORD] = value;
@@ -214,10 +224,13 @@ int main() {
                 }
                 if (tmp % WORD != 0 && tmp % WORD != 2) {
                     writeError(DataMisaligned);
+                    cout << "Simulation succeed." << endl;
                     return 0;
                 }
-                if(halt)
+                if(halt) {
+                    cout << "Simulation succeed." << endl;
                     return 0;
+                }
                 if(!brk) {
                     value = registers[instr.rt];
                     target = raw_data[tmp / WORD];
@@ -232,6 +245,7 @@ int main() {
                 brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
                 if (tmp >= MAX_MEMORY) {
                     writeError(AddrOverflow);
+                    cout << "Simulation succeed." << endl;
                     return 0;
                 }
                 if(!brk) {
@@ -268,17 +282,17 @@ int main() {
                     registers[instr.rt] = 0;
                 break;
             case OP_BEQ:
-                if(checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
                     if (registers[instr.rs] == registers[instr.rt])
                         nowPC = sum;
                 break;
             case OP_BNE:
-                if(checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
                     if (registers[instr.rs] != registers[instr.rt])
                         nowPC = sum;
                 break;
             case OP_BGTZ:
-                if(checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
+                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
                     if (registers[instr.rs] > 0)
                         nowPC = sum;
                 break;
@@ -313,6 +327,7 @@ void Initialize() {
     instr = Instruction(raw_instr[0]);
     snapshot.open("snapshot.rpt", ios::out);
     snapshot.close();
+    nowPC = registers[NextPCReg];
     writeReg();
 }
 
