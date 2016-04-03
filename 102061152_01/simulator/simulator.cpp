@@ -8,6 +8,7 @@ using namespace std;
 
 #define MAX_CYCLE   500000
 #define MAX_MEMORY  0x400
+#define MIN_MEMORY	0x0
 
 #define WORD        4
 #define BYTE        8
@@ -22,6 +23,11 @@ using namespace std;
 #define RegNum          35
 
 enum ERROR { WriteRegZero , NumOverflow, AddrOverflow, DataMisaligned };
+
+const char* error_path = (char*)"error_dump.rpt";
+const char* snapshot_path = (char*)"snapshot.rpt";
+const char* iimage_path = (char*)"iimage.bin";
+const char* dimage_path = (char*)"dimage.bin";
 
 fstream snapshot, error;
 Instruction instr(0);
@@ -39,7 +45,7 @@ void loadIimage();
 void loadDimage();
 void writeReg();
 
-bool checkNumOverflow(int, int, int*);
+void checkNumOverflow(int, int, int*);
 void writeError(int);
 void setPC();
 
@@ -51,38 +57,42 @@ int main() {
 
         bool brk = false, halt = false;
 
+        int shamt = instr.other >> 6;
+        int func = instr.other & 0x3f;
         int sum, tmp, value, target;
         unsigned int uint;
 
-        if(((instr.operation >= 0x20 && instr.operation <= 0x24) || instr.operation == OP_ADDI) && instr.rt == 0) {
+        if((instr.operation >= 0x08 && instr.operation <= 0x25) && instr.rt == 0) {
             writeError(WriteRegZero);
             brk = true;
-        } else if(instr.operation < 0x20 && instr.operation >= 0x09 && instr.rt == 0) {
-            writeError(WriteRegZero);
-            break;
         }
 
         switch(instr.operation) {
             case R_FORMAT:
 
-                if(instr.other != FUNC_JR && instr.other != FUNC_ADD && instr.other != FUNC_SUB && instr.rd == 0 && instr.ori != 0) {
+
+                if(func == FUNC_SLL && instr.rt == 0 && instr.rd == 0 && instr.other == 0) {
+                    break;
+                } else if(func != FUNC_JR && func != FUNC_ADD && func != FUNC_SUB && instr.rd == 0) {
                     writeError(WriteRegZero);
                     break;
-                } else if(instr.other != FUNC_JR && instr.rd == 0) {
+                } else if(func != FUNC_JR && instr.rd == 0) {
                     writeError(WriteRegZero);
                     brk = true;
                 }
 
-                switch (instr.other & 0x3f) {
+                switch (func) {
                     case FUNC_ADD:
-                        if(!checkNumOverflow(registers[instr.rs], registers[instr.rt], &sum) && !brk)
+                        checkNumOverflow(registers[instr.rs], registers[instr.rt], &sum);
+                        if(!brk)
                             registers[instr.rd] = sum;
                         break;
                     case FUNC_ADDU:
                         registers[instr.rd] = registers[instr.rs] + registers[instr.rt];
                         break;
                     case FUNC_SUB:
-                        if(!checkNumOverflow(registers[instr.rs], -registers[instr.rt], &sum) && !brk)
+                        checkNumOverflow(registers[instr.rs], -registers[instr.rt], &sum);
+                        if(!brk)
                             registers[instr.rd] = sum;
                         break;
                     case FUNC_AND:
@@ -107,15 +117,15 @@ int main() {
                             registers[instr.rd] = 0;
                         break;
                     case FUNC_SLL:
-                        registers[instr.rd] = registers[instr.rt] << instr.other;
+                        registers[instr.rd] = registers[instr.rt] << shamt;
                         break;
                     case FUNC_SRL:
                         uint = (unsigned int) registers[instr.rt];
-                        uint >>= instr.other;
+                        uint >>= shamt;
                         registers[instr.rd] = uint;
                         break;
                     case FUNC_SRA:
-                        registers[instr.rd] = registers[instr.rt] >> instr.other;
+                        registers[instr.rd] = registers[instr.rt] >> shamt;
                         break;
                     case FUNC_JR:
                         nowPC = registers[instr.rs];
@@ -126,15 +136,17 @@ int main() {
                 break;
 
             case OP_ADDI:
-                if(!checkNumOverflow(registers[instr.rs], instr.other, &sum) && !brk)
+                checkNumOverflow(registers[instr.rs], instr.other, &sum);
+                if(!brk)
                     registers[instr.rt] = sum;
                 break;
             case OP_ADDIU:
-                registers[instr.rt] = registers[instr.rs] + instr.other;
+                if(!brk)
+                    registers[instr.rt] = registers[instr.rs] + instr.other;
                 break;
             case OP_LW:
-                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
-                if (tmp >= MAX_MEMORY) {
+                checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY || (tmp + WORD) > MAX_MEMORY || tmp < MIN_MEMORY) {
                     writeError(AddrOverflow);
                     halt = true;
                 }
@@ -154,8 +166,8 @@ int main() {
                 break;
             case OP_LH:
             case OP_LHU:
-                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
-                if (tmp >= MAX_MEMORY) {
+                checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY || (tmp + WORD/2) > MAX_MEMORY || tmp < MIN_MEMORY) {
                     writeError(AddrOverflow);
                     halt = true;
                 }
@@ -180,8 +192,8 @@ int main() {
                 break;
             case OP_LB:
             case OP_LBU:
-                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
-                if (tmp >= MAX_MEMORY) {
+                checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY || (tmp + WORD/4) > MAX_MEMORY || tmp < MIN_MEMORY) {
                     writeError(AddrOverflow);
                     cout << "Simulation succeed." << endl;
                     return 0;
@@ -197,8 +209,8 @@ int main() {
                 }
                 break;
             case OP_SW:
-                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
-                if (tmp >= MAX_MEMORY) {
+                checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY || (tmp + WORD) > MAX_MEMORY || tmp < MIN_MEMORY) {
                     writeError(AddrOverflow);
                     halt = true;
                 }
@@ -217,8 +229,8 @@ int main() {
                 }
                 break;
             case OP_SH:
-                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
-                if (tmp >= MAX_MEMORY) {
+                checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY || (tmp + WORD/2) > MAX_MEMORY || tmp < MIN_MEMORY) {
                     writeError(AddrOverflow);
                     halt = true;
                 }
@@ -242,8 +254,8 @@ int main() {
                 }
                 break;
             case OP_SB:
-                brk |= checkNumOverflow(registers[instr.rs], instr.other, &tmp);
-                if (tmp >= MAX_MEMORY) {
+                checkNumOverflow(registers[instr.rs], instr.other, &tmp);
+                if (tmp >= MAX_MEMORY || (tmp + WORD/4) > MAX_MEMORY || tmp < MIN_MEMORY) {
                     writeError(AddrOverflow);
                     cout << "Simulation succeed." << endl;
                     return 0;
@@ -264,37 +276,43 @@ int main() {
                 }
                 break;
             case OP_LUI:
-                registers[instr.rt] = instr.other << 16;
+                if(!brk)
+                    registers[instr.rt] = instr.other << 16;
                 break;
             case OP_ANDI:
-                registers[instr.rt] = registers[instr.rs] & (instr.other & 0xffff);
+                if(!brk)
+                    registers[instr.rt] = registers[instr.rs] & (instr.other & 0xffff);
                 break;
             case OP_ORI:
-                registers[instr.rt] = registers[instr.rs] | (instr.other & 0xffff);
+                if(!brk)
+                    registers[instr.rt] = registers[instr.rs] | (instr.other & 0xffff);
                 break;
             case OP_NORI:
-                registers[instr.rt] = ~(registers[instr.rs] & (instr.other & 0xffff));
+                if(!brk)
+                    registers[instr.rt] = ~(registers[instr.rs] | (instr.other & 0xffff));
                 break;
             case OP_SLTI:
-                if (registers[instr.rs] < instr.other)
-                    registers[instr.rt] = 1;
-                else
-                    registers[instr.rt] = 0;
+                if(!brk) {
+                    if (registers[instr.rs] < instr.other)
+                        registers[instr.rt] = 1;
+                    else
+                        registers[instr.rt] = 0;
+                }
                 break;
             case OP_BEQ:
-                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
-                    if (registers[instr.rs] == registers[instr.rt])
-                        nowPC = sum;
+                checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum);
+                if (registers[instr.rs] == registers[instr.rt])
+                    nowPC = sum;
                 break;
             case OP_BNE:
-                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
-                    if (registers[instr.rs] != registers[instr.rt])
-                        nowPC = sum;
+                checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum);
+                if (registers[instr.rs] != registers[instr.rt])
+                    nowPC = sum;
                 break;
             case OP_BGTZ:
-                if(!checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum))
-                    if (registers[instr.rs] > 0)
-                        nowPC = sum;
+                checkNumOverflow(nowPC, IndexToAddr(instr.other), &sum);
+                if (registers[instr.rs] > 0)
+                    nowPC = sum;
                 break;
 
             case OP_J:
@@ -319,13 +337,16 @@ int main() {
 
 
 void Initialize() {
+
+
+
     loadIimage();
     loadDimage();
-    error.open("error_dump.rpt", ios::out);
+    error.open(error_path, ios::out);
     error.close();
 
     instr = Instruction(raw_instr[0]);
-    snapshot.open("snapshot.rpt", ios::out);
+    snapshot.open(snapshot_path, ios::out);
     snapshot.close();
     nowPC = registers[NextPCReg];
     writeReg();
@@ -333,12 +354,12 @@ void Initialize() {
 
 void loadIimage() {
     fstream iimage;
-    iimage.open("iimage.bin", ios::binary | ios::in);
+    iimage.open(iimage_path, ios::binary | ios::in);
     assert(iimage);
 
     for(int i = 0; i < 2; i++) {
-        char tmp[4];
-        iimage.read(tmp, WORD);
+        unsigned char tmp[4];
+        iimage.read((char*)tmp, WORD);
         unsigned int num = (unsigned int)tmp[0]<<24 | (unsigned int)tmp[1]<<16 | (unsigned int)tmp[2]<<8 | (unsigned int)tmp[3];
         if(i == 0) {
             registers[PCReg] = num;
@@ -363,12 +384,12 @@ void loadIimage() {
 
 void loadDimage() {
     fstream dimage;
-    dimage.open("dimage.bin", ios::binary | ios::in);
+    dimage.open(dimage_path, ios::binary | ios::in);
     assert(dimage);
 
     for(int i = 0; i < 2; i++) {
-        char tmp[4];
-        dimage.read(tmp, WORD);
+        unsigned char tmp[4];
+        dimage.read((char*)tmp, WORD);
         unsigned int num = (unsigned int)tmp[0]<<24 | (unsigned int)tmp[1]<<16 | (unsigned int)tmp[2]<<8 | (unsigned int)tmp[3];
         if(i == 0) {
             registers[StackReg] = num;
@@ -388,7 +409,7 @@ void loadDimage() {
 }
 
 void writeReg() {
-    snapshot.open("snapshot.rpt", ios::out | ios::app);
+    snapshot.open(snapshot_path, ios::out | ios::app);
 
     snapshot << "cycle " << dec << cycle << endl;
     for(int i = 0; i < PCReg; i++) {
@@ -399,17 +420,15 @@ void writeReg() {
     cycle++;
 }
 
-bool checkNumOverflow(int a, int b, int *sum) {
+void checkNumOverflow(int a, int b, int *sum) {
     *sum = a + b;
     if (!((a ^ b) & SIGN_BIT) && ((a ^ *sum) & SIGN_BIT)) {
         writeError(NumOverflow);
-        return 1;
     }
-    return 0;
 }
 
 void writeError(int type) {
-    error.open("error_dump.rpt", ios::out | ios::app);
+    error.open(error_path, ios::out | ios::app);
 
     error << "In cycle " << cycle << ": ";
     switch(type) {
@@ -440,6 +459,10 @@ void setPC() {
     int index = (registers[PCReg] - PC_init)/WORD;
     if(index > instr_num)
         assert(false);
-    instr = Instruction(raw_instr[index]);
+    if(index < 0)
+        instr = Instruction(0);
+    else
+        instr = Instruction(raw_instr[index]);
     writeReg();
 }
+
